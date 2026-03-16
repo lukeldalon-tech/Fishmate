@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FishMate</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet"></script>
+
+<style>
+
+body{
+margin:0;
+font-family:Arial;
+background:#eef7ff;
+}
+
+header{
+text-align:center;
+background:#0a7cc2;
+color:white;
+padding:30px;
+}
+
+.logo{
+width:200px;
+}
+
+nav{
+display:flex;
+justify-content:space-around;
+background:#064e78;
+padding:10px;
+}
+
+nav button{
+background:none;
+border:none;
+color:white;
+font-weight:bold;
+font-size:15px;
+}
+
+section{
+display:none;
+padding:15px;
+}
+
+.active{
+display:block;
+}
+
+.card{
+background:white;
+padding:12px;
+margin:10px 0;
+border-radius:8px;
+box-shadow:0 0 6px rgba(0,0,0,.2);
+}
+
+input,textarea{
+width:100%;
+padding:8px;
+margin:6px 0;
+border-radius:6px;
+border:1px solid #ccc;
+}
+
+button.action{
+background:#0a7cc2;
+color:white;
+border:none;
+padding:10px;
+border-radius:6px;
+width:100%;
+margin-top:5px;
+}
+
+#map{
+height:420px;
+border-radius:10px;
+}
+
+img{
+max-width:150px;
+border-radius:8px;
+margin-top:6px;
+}
+
+</style>
+</head>
+
+<body>
+
+<header>
+
+<img src="fishmate-logo.jpg" class="logo">
+
+<h1>FishMate</h1>
+
+<p>Smarter Fishing • Track Catches • Find Hotspots</p>
+
+</header>
+
+<nav>
+
+<button onclick="show('home')">Home</button>
+<button onclick="show('catch')">Add Catch</button>
+<button onclick="show('logs')">Past Logs</button>
+<button onclick="show('mapPage')">Map</button>
+<button onclick="show('lures')">Lures</button>
+<button onclick="show('favorites')">Favorites</button>
+
+</nav>
+
+<section id="home" class="active">
+
+<div class="card">
+<h2>Fishing Forecast</h2>
+<button class="action" onclick="getWeather()">Get Forecast</button>
+<div id="weather"></div>
+<div id="pressurePrediction"></div>
+</div>
+
+<div class="card">
+<h3>Best Fishing Times</h3>
+<div id="bestTimes"></div>
+</div>
+
+<div class="card">
+<h3>Moon Phase</h3>
+<div id="moon"></div>
+</div>
+
+<div class="card">
+<h3>Best Lure From Your Data</h3>
+<div id="bestLure"></div>
+</div>
+
+</section>
+
+<section id="catch">
+
+<h2>Add Catch</h2>
+
+<input id="fishType" placeholder="Fish species">
+
+<input id="length" placeholder="Length (inches)">
+
+<input id="weight" placeholder="Weight (lbs)">
+
+<input id="lure" placeholder="Lure / bait">
+
+<input type="file" id="photo">
+
+<button class="action" onclick="identifyFish()">AI Identify Fish</button>
+
+<div id="aiResult"></div>
+
+<textarea id="notes" placeholder="Notes"></textarea>
+
+<button class="action" onclick="saveCatch()">Save Catch</button>
+
+</section>
+
+<section id="logs">
+
+<h2>Past Fishing Logs</h2>
+
+<div id="catchList"></div>
+
+</section>
+
+<section id="mapPage">
+
+<h2>Fishing Map + Heatmap</h2>
+
+<div id="map"></div>
+
+</section>
+
+<section id="lures">
+
+<h2>Lure Success Stats</h2>
+
+<div id="lureStats"></div>
+
+</section>
+
+<section id="favorites">
+
+<h2>Add Favorite Spot</h2>
+
+<input id="favName" placeholder="Spot Name">
+
+<textarea id="favNotes" placeholder="Notes"></textarea>
+
+<button class="action" onclick="saveFavorite()">Save Spot</button>
+
+<div id="favList"></div>
+
+</section>
+
+<script>
+
+let model
+
+mobilenet.load().then(m=>model=m)
+
+function show(id){
+
+document.querySelectorAll("section").forEach(s=>s.classList.remove("active"))
+
+document.getElementById(id).classList.add("active")
+
+if(id==="logs") renderLogs()
+
+if(id==="mapPage") loadMap()
+
+if(id==="lures") lureStats()
+
+if(id==="favorites") renderFavorites()
+
+}
+
+async function identifyFish(){
+
+let file=document.getElementById("photo").files[0]
+
+if(!file) return
+
+let img=document.createElement("img")
+
+img.src=URL.createObjectURL(file)
+
+img.onload=async()=>{
+
+let results=await model.classify(img)
+
+aiResult.innerHTML="AI guess: "+results[0].className
+
+}
+
+}
+
+function saveCatch(){
+
+navigator.geolocation.getCurrentPosition(pos=>{
+
+let catches=JSON.parse(localStorage.getItem("catches")||"[]")
+
+let photoFile=document.getElementById("photo").files[0]
+
+let reader=new FileReader()
+
+let data={
+fish:fishType.value,
+length:length.value,
+weight:weight.value,
+lure:lure.value,
+notes:notes.value,
+lat:pos.coords.latitude,
+lon:pos.coords.longitude,
+date:new Date().toLocaleDateString()
+}
+
+function finish(){
+
+catches.push(data)
+
+localStorage.setItem("catches",JSON.stringify(catches))
+
+alert("Catch saved!")
+
+bestLure()
+
+}
+
+if(photoFile){
+
+reader.onload=function(){
+data.photo=reader.result
+finish()
+}
+
+reader.readAsDataURL(photoFile)
+
+}else finish()
+
+})
+
+}
+
+function renderLogs(){
+
+let catches=JSON.parse(localStorage.getItem("catches")||"[]")
+
+catchList.innerHTML=""
+
+catches.forEach(c=>{
+
+let div=document.createElement("div")
+
+div.className="card"
+
+div.innerHTML="<b>"+c.fish+"</b><br>"+
+"Length: "+c.length+" in<br>"+
+"Weight: "+c.weight+" lbs<br>"+
+"Lure: "+c.lure+"<br>"+c.date
+
+if(c.photo){
+
+let img=document.createElement("img")
+
+img.src=c.photo
+
+div.appendChild(img)
+
+}
+
+catchList.appendChild(div)
+
+})
+
+}
+
+function lureStats(){
+
+let catches=JSON.parse(localStorage.getItem("catches")||"[]")
+
+let stats={}
+
+catches.forEach(c=>{
+if(!stats[c.lure]) stats[c.lure]=0
+stats[c.lure]++
+})
+
+lureStats.innerHTML=""
+
+for(let lure in stats){
+
+let div=document.createElement("div")
+
+div.className="card"
+
+div.innerHTML=lure+" : "+stats[lure]+" fish"
+
+lureStats.appendChild(div)
+
+}
+
+}
+
+function bestLure(){
+
+let catches=JSON.parse(localStorage.getItem("catches")||"[]")
+
+if(catches.length===0) return
+
+let stats={}
+
+catches.forEach(c=>{
+if(!stats[c.lure]) stats[c.lure]=0
+stats[c.lure]++
+})
+
+let best=Object.keys(stats).reduce((a,b)=>stats[a]>stats[b]?a:b)
+
+document.getElementById("bestLure").innerHTML=best
+
+}
+
+function loadMap(){
+
+navigator.geolocation.getCurrentPosition(pos=>{
+
+let map=L.map("map").setView([pos.coords.latitude,pos.coords.longitude],11)
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map)
+
+let catches=JSON.parse(localStorage.getItem("catches")||"[]")
+
+let heat=[]
+
+catches.forEach(c=>{
+
+if(!c.lat) return
+
+L.marker([c.lat,c.lon]).addTo(map)
+
+heat.push([c.lat,c.lon,0.6])
+
+})
+
+L.heatLayer(heat,{radius:25}).addTo(map)
+
+})
+
+}
+
+function getWeather(){
+
+navigator.geolocation.getCurrentPosition(pos=>{
+
+let lat=pos.coords.latitude
+
+let lon=pos.coords.longitude
+
+fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,pressure_msl`)
+
+.then(r=>r.json())
+
+.then(data=>{
+
+let temp=data.current.temperature_2m
+
+let pressure=data.current.pressure_msl
+
+weather.innerHTML="Temp: "+temp+"°C<br>Pressure: "+pressure+" hPa"
+
+let prediction=""
+
+if(pressure>1018) prediction="High pressure: fish slow down"
+
+else if(pressure<1005) prediction="Low pressure: aggressive bite"
+
+else prediction="Stable pressure: normal fishing"
+
+pressurePrediction.innerHTML=prediction
+
+})
+
+})
+
+}
+
+function getMoon(){
+
+let today=new Date()
+
+let lp=2551443
+
+let newMoon=new Date(1970,0,7,20,35,0)
+
+let phase=((today.getTime()-newMoon.getTime())/1000)%lp
+
+let index=Math.floor(phase/(lp/8))
+
+let phases=["New Moon","Waxing Crescent","First Quarter","Waxing Gibbous","Full Moon","Waning Gibbous","Last Quarter","Waning Crescent"]
+
+moon.innerHTML=phases[index]
+
+}
+
+function saveFavorite(){
+
+let favs=JSON.parse(localStorage.getItem("favs")||"[]")
+
+favs.push({name:favName.value,notes:favNotes.value})
+
+localStorage.setItem("favs",JSON.stringify(favs))
+
+renderFavorites()
+
+}
+
+function renderFavorites(){
+
+let favs=JSON.parse(localStorage.getItem("favs")||"[]")
+
+favList.innerHTML=""
+
+favs.forEach(f=>{
+
+let div=document.createElement("div")
+
+div.className="card"
+
+div.innerHTML="<b>"+f.name+"</b><br>"+f.notes
+
+favList.appendChild(div)
+
+})
+
+}
+
+function fishingTimes(){
+
+navigator.geolocation.getCurrentPosition(pos=>{
+
+fetch(`https://api.sunrise-sunset.org/json?lat=${pos.coords.latitude}&lng=${pos.coords.longitude}&formatted=0`)
+.then(r=>r.json())
+.then(data=>{
+
+let sunrise=new Date(data.results.sunrise)
+
+let sunset=new Date(data.results.sunset)
+
+let morning=new Date(sunrise.getTime()+3600000)
+
+let evening=new Date(sunset.getTime()-3600000)
+
+bestTimes.innerHTML="Morning Bite: "+morning.toLocaleTimeString()+"<br>Evening Bite: "+evening.toLocaleTimeString()
+
+})
+
+})
+
+}
+
+getMoon()
+bestLure()
+fishingTimes()
+
+</script>
+
+</body>
+</html>
