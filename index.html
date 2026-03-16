@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FishMate</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<style>
+
+body{
+font-family:Arial;
+margin:0;
+background:#e8f6ff;
+}
+
+header{
+background:#0077b6;
+color:white;
+text-align:center;
+padding:15px;
+}
+
+nav{
+display:flex;
+justify-content:space-around;
+background:#00b4d8;
+padding:10px;
+}
+
+nav button{
+background:none;
+border:none;
+color:white;
+font-size:16px;
+}
+
+section{
+display:none;
+padding:15px;
+}
+
+.active{
+display:block;
+}
+
+.card{
+background:white;
+padding:10px;
+margin:8px 0;
+border-radius:8px;
+box-shadow:0 0 5px rgba(0,0,0,.2);
+}
+
+input,textarea{
+width:100%;
+padding:6px;
+margin:5px 0;
+}
+
+button.action{
+background:#0077b6;
+color:white;
+border:none;
+padding:10px;
+width:100%;
+margin-top:5px;
+}
+
+.stat{
+background:white;
+padding:10px;
+margin:5px 0;
+border-radius:8px;
+}
+
+#mapView{
+height:400px;
+}
+
+img{
+max-width:120px;
+border-radius:6px;
+margin-top:5px;
+}
+
+</style>
+</head>
+
+<body>
+
+<header>
+<h1>FishMate</h1>
+</header>
+
+<nav>
+<button onclick="show('home')">Home</button>
+<button onclick="show('catch')">Catch Log</button>
+<button onclick="show('map')">Map</button>
+<button onclick="show('lures')">Lure Stats</button>
+<button onclick="show('favorites')">Favorites</button>
+</nav>
+
+<section id="home" class="active">
+
+<h2>Fishing Conditions</h2>
+
+<button class="action" onclick="getWeather()">Get Sunrise/Sunset</button>
+
+<div id="weather"></div>
+
+<h2>Moon Phase</h2>
+
+<div id="moonPhase"></div>
+
+<h2>Best Lure</h2>
+
+<div id="suggestion"></div>
+
+</section>
+
+<section id="catch">
+
+<h2>Add Catch</h2>
+
+<input list="fishList" id="fishType" placeholder="Fish Type">
+
+<datalist id="fishList">
+<option>Largemouth Bass</option>
+<option>Smallmouth Bass</option>
+<option>Bluegill</option>
+<option>Crappie</option>
+<option>Catfish</option>
+<option>Trout</option>
+</datalist>
+
+<input id="fishSize" placeholder="Size (inches)">
+
+<input id="lureUsed" placeholder="Lure/Bait">
+
+<input type="file" id="fishPhoto" accept="image/*">
+
+<textarea id="notes" placeholder="Notes"></textarea>
+
+<button class="action" onclick="getLocation()">Use GPS Location</button>
+
+<button class="action" onclick="saveCatch()">Save Catch</button>
+
+<h3>Search</h3>
+
+<input id="search" placeholder="Search fish..." oninput="renderCatch()">
+
+<div id="catchList"></div>
+
+</section>
+
+<section id="map">
+
+<h2>Fishing Map</h2>
+
+<div id="mapView"></div>
+
+</section>
+
+<section id="lures">
+
+<h2>Lure Success</h2>
+
+<div id="lureStats"></div>
+
+</section>
+
+<section id="favorites">
+
+<h2>Add Favorite Spot</h2>
+
+<input id="favSpot" placeholder="Spot name">
+
+<textarea id="favNotes" placeholder="Notes"></textarea>
+
+<button class="action" onclick="saveFavorite()">Save Spot</button>
+
+<div id="favList"></div>
+
+</section>
+
+<script>
+
+let currentLocation=""
+let map
+
+function show(id){
+
+document.querySelectorAll("section").forEach(s=>s.classList.remove("active"))
+
+document.getElementById(id).classList.add("active")
+
+if(id=="catch") renderCatch()
+if(id=="lures") renderStats()
+if(id=="favorites") renderFavorites()
+if(id=="map") loadMap()
+
+}
+
+function getLocation(){
+
+navigator.geolocation.getCurrentPosition(pos=>{
+
+currentLocation=
+pos.coords.latitude.toFixed(4)+
+","+
+pos.coords.longitude.toFixed(4)
+
+alert("Location saved")
+
+})
+
+}
+
+function saveCatch(){
+
+let catches=JSON.parse(localStorage.getItem("catches")||"[]")
+
+let photo=document.getElementById("fishPhoto").files[0]
+
+let catchData={
+fish:fishType.value,
+size:fishSize.value,
+lure:lureUsed.value,
+notes:notes.value,
+location:currentLocation,
+date:new Date().toLocaleDateString()
+}
+
+if(photo){
+
+let reader=new FileReader()
+
+reader.onload=function(){
+
+catchData.photo=reader.result
+
+catches.push(catchData)
+
+localStorage.setItem("catches",JSON.stringify(catches))
+
+renderCatch()
+
+suggestLure()
+
+}
+
+reader.readAsDataURL(photo)
+
+}else{
+
+catches.push(catchData)
+
+localStorage.setItem("catches",JSON.stringify(catches))
+
+renderCatch()
+
+suggestLure()
+
+}
+
+fishType.value=""
+fishSize.value=""
+lureUsed.value=""
+notes.value=""
+
+}
+
+function renderCatch(){
+
+let catches=JSON.parse(localStorage.getItem("catches")||"[]")
+
+let search=document.getElementById("search").value.toLowerCase()
+
+let list=document.getElementById("catchList")
+
+list.innerHTML=""
+
+catches.forEach(c=>{
+
+if(!c.fish.toLowerCase().includes(search)) return
+
+let card=document.createElement("div")
+
+card.className="card"
+
+card.innerHTML=
+"<b>"+c.fish+"</b> "+
+c.size+" in<br>"+
+"Lure: "+c.lure+
+"<br>"+c.date+
+"<br>"+c.location
+
+if(c.photo){
+
+let img=document.createElement("img")
+
+img.src=c.photo
+
+card.appendChild(img)
+
+}
+
+list.appendChild(card)
+
+})
+
+}
+
+function renderStats(){
+
+let catches=JSON.parse(localStorage.getItem("catches")||"[]")
+
+let stats={}
+
+catches.forEach(c=>{
+
+if(!stats[c.lure]) stats[c.lure]=0
+
+stats[c.lure]++
+
+})
+
+let box=document.getElementById("lureStats")
+
+box.innerHTML=""
+
+for(let lure in stats){
+
+let div=document.createElement("div")
+
+div.className="stat"
+
+div.innerHTML=lure+" : "+stats[lure]+" fish"
+
+box.appendChild(div)
+
+}
+
+}
+
+function suggestLure(){
+
+let catches=JSON.parse(localStorage.getItem("catches")||"[]")
+
+let lureCount={}
+
+catches.forEach(c=>{
+
+if(!lureCount[c.lure]) lureCount[c.lure]=0
+
+lureCount[c.lure]++
+
+})
+
+let best=Object.keys(lureCount).reduce((a,b)=>
+lureCount[a]>lureCount[b]?a:b
+,"")
+
+document.getElementById("suggestion").innerHTML=
+"<div class='card'>Try using: <b>"+best+"</b></div>"
+
+}
+
+function saveFavorite(){
+
+let favs=JSON.parse(localStorage.getItem("favs")||"[]")
+
+favs.push({
+spot:favSpot.value,
+notes:favNotes.value
+})
+
+localStorage.setItem("favs",JSON.stringify(favs))
+
+favSpot.value=""
+favNotes.value=""
+
+renderFavorites()
+
+}
+
+function renderFavorites(){
+
+let favs=JSON.parse(localStorage.getItem("favs")||"[]")
+
+let box=document.getElementById("favList")
+
+box.innerHTML=""
+
+favs.forEach(f=>{
+
+let card=document.createElement("div")
+
+card.className="card"
+
+card.innerHTML="<b>"+f.spot+"</b><br>"+f.notes
+
+box.appendChild(card)
+
+})
+
+}
+
+function getWeather(){
+
+navigator.geolocation.getCurrentPosition(pos=>{
+
+let lat=pos.coords.latitude
+let lon=pos.coords.longitude
+
+fetch(`https://api.sunrise-sunset.org/json?lat=${lat}&lng=${lon}&formatted=0`)
+.then(r=>r.json())
+.then(data=>{
+
+let sunrise=new Date(data.results.sunrise).toLocaleTimeString()
+let sunset=new Date(data.results.sunset).toLocaleTimeString()
+
+document.getElementById("weather").innerHTML=
+"<div class='card'>Sunrise: "+sunrise+"<br>Sunset: "+sunset+"</div>"
+
+})
+
+})
+
+}
+
+function loadMap(){
+
+navigator.geolocation.getCurrentPosition(pos=>{
+
+let lat=pos.coords.latitude
+let lon=pos.coords.longitude
+
+map=L.map('mapView').setView([lat,lon],12)
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map)
+
+let catches=JSON.parse(localStorage.getItem("catches")||"[]")
+
+catches.forEach(c=>{
+
+if(!c.location) return
+
+let parts=c.location.split(",")
+
+L.marker([parts[0],parts[1]])
+.addTo(map)
+.bindPopup(c.fish+" - "+c.lure)
+
+})
+
+})
+
+}
+
+function getMoon(){
+
+let today=new Date()
+
+let lp=2551443
+let newMoon=new Date(1970,0,7,20,35,0)
+
+let phase=((today.getTime()-newMoon.getTime())/1000)%lp
+
+let index=Math.floor(phase/(lp/8))
+
+let phases=[
+"New Moon",
+"Waxing Crescent",
+"First Quarter",
+"Waxing Gibbous",
+"Full Moon",
+"Waning Gibbous",
+"Last Quarter",
+"Waning Crescent"
+]
+
+document.getElementById("moonPhase").innerHTML=
+"<div class='card'>"+phases[index]+"</div>"
+
+}
+
+getMoon()
+renderCatch()
+suggestLure()
+
+</script>
+
+</body>
+</html>
